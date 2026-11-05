@@ -4,6 +4,7 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, ILike } from 'typeorm';
@@ -13,13 +14,39 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 
 @Injectable()
-export class UsersService {
+export class UsersService implements OnModuleInit {
   private readonly logger = new Logger(UsersService.name);
 
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
   ) {}
+
+  async onModuleInit() {
+    await this.seedSuperAdmin();
+  }
+
+  private async seedSuperAdmin() {
+    const superAdminEmail = 'delacruzlopezkeal@gmail.com';
+
+    let user = await this.userRepository.findOne({
+      where: { email: superAdminEmail },
+    });
+
+    if (!user) {
+      this.logger.log(`Sembrando usuario SUPER_ADMIN por defecto: ${superAdminEmail}`);
+      user = this.userRepository.create({
+        email: superAdminEmail,
+        role: UserRole.SUPER_ADMIN,
+        isActive: true,
+      });
+      await this.userRepository.save(user);
+    } else if (user.role !== UserRole.SUPER_ADMIN) {
+      this.logger.log(`Asegurando rol SUPER_ADMIN para: ${superAdminEmail}`);
+      user.role = UserRole.SUPER_ADMIN;
+      await this.userRepository.save(user);
+    }
+  }
 
   /**
    * Sincronización automática de sesión con Clerk.
