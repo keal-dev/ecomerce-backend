@@ -15,6 +15,9 @@ import { ProductsModule } from './products/products.module';
 import { BannersModule } from './banners/banners.module';
 import { PurchasesModule } from './purchases/purchases.module';
 import { SuppliersModule } from './suppliers/suppliers.module';
+import { PaymentsModule } from './payments/payments.module';
+import { MailModule } from './mail/mail.module';
+import { OrdersModule } from './orders/orders.module';
 
 @Module({
   imports: [
@@ -32,6 +35,9 @@ import { SuppliersModule } from './suppliers/suppliers.module';
     BannersModule,
     PurchasesModule,
     SuppliersModule,
+    PaymentsModule,
+    MailModule,
+    OrdersModule,
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
