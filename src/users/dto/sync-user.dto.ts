@@ -1,13 +1,13 @@
-import { IsString, IsEmail, IsOptional, IsNotEmpty } from 'class-validator';
+import { IsString, IsEmail, IsOptional } from 'class-validator';
 
 export class SyncUserDto {
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  clerkId: string;
+  clerkId?: string;
 
+  @IsOptional()
   @IsEmail()
-  @IsNotEmpty()
-  email: string;
+  email?: string;
 
   @IsOptional()
   @IsString()

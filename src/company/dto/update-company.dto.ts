@@ -60,4 +60,12 @@ export class UpdateCompanyDto {
   @IsOptional()
   @IsString()
   tiktokUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  boletaSeries?: string;
+
+  @IsOptional()
+  @IsString()
+  facturaSeries?: string;
 }

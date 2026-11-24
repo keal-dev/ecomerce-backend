@@ -55,17 +55,14 @@ export class UsersService implements OnModuleInit {
   async syncUser(dto: SyncUserDto): Promise<User> {
     const { clerkId, email, firstName, lastName, imageUrl } = dto;
 
-    const whereConditions: { clerkId?: string; email?: string }[] = [];
-    if (clerkId) {
-      whereConditions.push({ clerkId });
-    }
-    if (email) {
-      whereConditions.push({ email });
+    if (!clerkId || !email) {
+      throw new BadRequestException('Se requiere clerkId y email para sincronizar el usuario.');
     }
 
-    if (whereConditions.length === 0) {
-      throw new BadRequestException('Se requiere clerkId o email para sincronizar el usuario.');
-    }
+    const whereConditions: { clerkId?: string; email?: string }[] = [
+      { clerkId },
+      { email },
+    ];
 
     let user = await this.userRepository.findOne({
       where: whereConditions,

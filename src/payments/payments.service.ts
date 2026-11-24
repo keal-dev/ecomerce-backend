@@ -1,8 +1,15 @@
-import { Injectable, BadRequestException, InternalServerErrorException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  InternalServerErrorException,
+  HttpException,
+  Logger,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CreateChargeDto } from './dto/create-charge.dto';
 import { MailService } from '../mail/mail.service';
 import { OrdersService } from '../orders/orders.service';
+import { InvoicingService } from '../invoicing/invoicing.service';
 
 @Injectable()
 export class PaymentsService {
@@ -12,7 +19,47 @@ export class PaymentsService {
     private readonly configService: ConfigService,
     private readonly mailService: MailService,
     private readonly ordersService: OrdersService,
+    private readonly invoicingService: InvoicingService,
   ) {}
+
+  private async attemptCulqiRefund(
+    secretKey: string,
+    chargeId: string,
+    amountCents: number,
+  ): Promise<boolean> {
+    try {
+      const response = await fetch('https://api.culqi.com/v2/refunds', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${secretKey.trim()}`,
+        },
+        body: JSON.stringify({
+          amount: amountCents,
+          charge_id: chargeId,
+          reason: 'solicitud_comprador',
+        }),
+      });
+
+      if (!response.ok) {
+        const refundErr = await response.json().catch(() => ({}));
+        this.logger.error(
+          `[CRITICAL][Culqi] Falló el reembolso automático para el cargo ${chargeId}: ${JSON.stringify(refundErr)}`,
+        );
+        return false;
+      }
+
+      this.logger.log(
+        `[Culqi] Reembolso automático ejecutado con éxito para el cargo ${chargeId}.`,
+      );
+      return true;
+    } catch (err: any) {
+      this.logger.error(
+        `[CRITICAL][Culqi] Excepción al intentar reembolsar cargo ${chargeId}: ${err.message}`,
+      );
+      return false;
+    }
+  }
 
   async processCulqiCharge(dto: CreateChargeDto) {
     // 1. Selector de entorno Culqi: 'production' vs 'test'
@@ -40,6 +87,29 @@ export class PaymentsService {
       );
     }
 
+    if (!dto.items || dto.items.length === 0) {
+      throw new BadRequestException('El carrito no contiene productos válidos.');
+    }
+
+    // 2. Validar stock y recalcular montos reales desde PostgreSQL antes de cobrar
+    const priced = await this.ordersService.validateAndPriceItems(dto.items, {
+      applyOnlineShipping: true,
+    });
+    const serverAmountCents = Math.round(priced.total * 100);
+
+    if (serverAmountCents <= 0) {
+      throw new BadRequestException('El monto calculado del pedido debe ser mayor a 0.');
+    }
+
+    if (
+      typeof dto.amount === 'number' &&
+      Math.abs(Math.round(dto.amount) - serverAmountCents) > 1
+    ) {
+      this.logger.warn(
+        `[Security][Culqi] Discrepancia de monto detectada para ${dto.email}: cliente envió ${dto.amount} céntimos, servidor calculó ${serverAmountCents} céntimos.`,
+      );
+    }
+
     this.logger.log(`[Culqi] Procesando cargo en modo '${culqiEnv.toUpperCase()}'...`);
 
     try {
@@ -53,7 +123,7 @@ export class PaymentsService {
       if (dto.phoneNumber) antifraudDetails.phone_number = dto.phoneNumber;
 
       const chargePayload: Record<string, any> = {
-        amount: Math.round(dto.amount),
+        amount: serverAmountCents,
         currency_code: dto.currencyCode || 'PEN',
         email: dto.email,
         source_id: dto.tokenId,
@@ -81,11 +151,10 @@ export class PaymentsService {
         throw new BadRequestException(errorMsg);
       }
 
-      // 3. Guardar el pedido en la base de datos PostgreSQL
-      const totalAmount = (dto.amount || 0) / 100;
+      // 3. Guardar el pedido en PostgreSQL (nunca tragar error si ya se cobró)
       const customerFullName = `${dto.firstName || ''} ${dto.lastName || ''}`.trim() || 'Cliente';
 
-      let savedOrder: any = null;
+      let savedOrder: any;
       try {
         savedOrder = await this.ordersService.createOrder({
           orderNumber: dto.orderNumber,
@@ -99,9 +168,9 @@ export class PaymentsService {
           district: dto.district || '',
           address: dto.address || '',
           reference: dto.reference,
-          subtotal: dto.subtotal !== undefined ? dto.subtotal : totalAmount,
-          shippingCost: dto.shippingCost !== undefined ? dto.shippingCost : 0,
-          total: totalAmount,
+          subtotal: priced.subtotal,
+          shippingCost: priced.shippingCost,
+          total: priced.total,
           currencySymbol: dto.currencySymbol || 'S/',
           paymentMethod: 'Culqi (Tarjeta / Yape)',
           paymentStatus: 'paid',
@@ -111,26 +180,52 @@ export class PaymentsService {
           invoiceType: dto.invoiceType,
           companyRuc: dto.companyRuc,
           companyLegalName: dto.companyLegalName,
-          items: (dto.items || []).map((it: any) => ({
-            productId: it.productId || it.id,
-            title: it.title,
-            sku: it.sku,
-            imageUrl: it.imageUrl,
-            quantity: it.quantity,
-            price: it.price,
-          })),
+          items: priced.items,
         });
       } catch (err: any) {
-        this.logger.error(`[Orders] Error al persistir el pedido en base de datos: ${err.message}`);
+        this.logger.error(
+          `[CRITICAL][Payments] Cargo Culqi ${data.id} (ref: ${data.reference_code}) aprobado por S/ ${priced.total}, pero falló al guardar el pedido: ${err.message}`,
+        );
+        const refunded = await this.attemptCulqiRefund(
+          secretKey,
+          data.id,
+          serverAmountCents,
+        );
+        const refLabel = data.reference_code || data.id;
+        throw new InternalServerErrorException(
+          refunded
+            ? `No pudimos confirmar tu pedido por disponibilidad de stock. Tu pago ha sido reembolsado automáticamente (Ref: ${refLabel}).`
+            : `Tu pago fue procesado (Ref: ${refLabel}), pero ocurrió un error al registrar el pedido. Por favor contáctanos indicando esta referencia para resolverlo de inmediato.`,
+        );
       }
 
       const finalOrderNumber =
-        savedOrder?.orderNumber ||
-        data.reference_code ||
+        savedOrder.orderNumber ||
         dto.orderNumber ||
+        data.reference_code ||
         `ORD-${Date.now().toString().slice(-6)}`;
 
-      // 4. Enviar correo con Resend solo si estamos en modo TEST (en PRODUCCIÓN lo envía Culqi)
+      // 4. Emitir Comprobante Electrónico (Boleta o Factura) en Facturalo.pe
+      let invoiceResult: any = null;
+      if (savedOrder?.id) {
+        try {
+          this.logger.log(`[Facturalo] Emitiendo comprobante para pedido ID ${savedOrder.id}...`);
+          savedOrder = await this.invoicingService.emitInvoiceForOrder(savedOrder.id);
+          invoiceResult = {
+            series: savedOrder.invoiceSeries,
+            number: savedOrder.invoiceNumber,
+            pdfUrl: savedOrder.invoicePdfUrl,
+            xmlUrl: savedOrder.invoiceXmlUrl,
+            status: savedOrder.invoiceSunatStatus,
+          };
+        } catch (invoiceErr: any) {
+          this.logger.error(
+            `[Facturalo] Error no bloqueante al emitir comprobante: ${invoiceErr.message}`,
+          );
+        }
+      }
+
+      // 5. Enviar correo con Resend solo si estamos en modo TEST (en PRODUCCIÓN lo envía Culqi)
       if (!isProduction) {
         this.logger.log(
           `[Email] Modo TEST activo: enviando correo de confirmación con Resend a ${dto.email}...`,
@@ -148,10 +243,10 @@ export class PaymentsService {
             invoiceType: dto.invoiceType,
             companyRuc: dto.companyRuc,
             companyLegalName: dto.companyLegalName,
-            items: dto.items || [],
-            subtotal: dto.subtotal !== undefined ? dto.subtotal : totalAmount,
-            shippingCost: dto.shippingCost !== undefined ? dto.shippingCost : 0,
-            total: totalAmount,
+            items: priced.items,
+            subtotal: priced.subtotal,
+            shippingCost: priced.shippingCost,
+            total: priced.total,
             currencySymbol: dto.currencySymbol || 'S/',
             companyName: dto.companyName || 'Tienda Online',
           })
@@ -174,10 +269,11 @@ export class PaymentsService {
         outcome: data.outcome,
         amount: data.amount,
         currencyCode: data.currency_code,
+        invoice: invoiceResult,
         message: 'Pago procesado y pedido guardado exitosamente',
       };
     } catch (error: any) {
-      if (error instanceof BadRequestException) {
+      if (error instanceof HttpException) {
         throw error;
       }
       throw new BadRequestException(

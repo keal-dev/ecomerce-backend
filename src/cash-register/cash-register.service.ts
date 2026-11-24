@@ -5,7 +5,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import {
   CashSession,
   CashSessionStatus,
@@ -85,13 +85,16 @@ export class CashRegisterService {
       throw new BadRequestException('Esta sesión de caja ya fue cerrada.');
     }
 
-    const actualAmount = Number(dto.actualAmount) || 0;
-    const expectedAmount =
-      dto.expectedAmount !== undefined && dto.expectedAmount !== null
-        ? Number(dto.expectedAmount)
-        : Number(session.initialAmount);
+    const actualAmount = Number((Number(dto.actualAmount) || 0).toFixed(2));
+    const expectedAmount = Number(
+      (
+        session.expectedAmount !== null && session.expectedAmount !== undefined
+          ? Number(session.expectedAmount)
+          : Number(session.initialAmount) || 0
+      ).toFixed(2),
+    );
 
-    const difference = actualAmount - expectedAmount;
+    const difference = Number((actualAmount - expectedAmount).toFixed(2));
 
     session.closedById = dto.closedById;
     session.actualAmount = actualAmount;
@@ -123,5 +126,53 @@ export class CashRegisterService {
       },
       take: 50,
     });
+  }
+
+  /**
+   * Suma una venta en efectivo al monto esperado de la sesión de caja abierta actualmente
+   */
+  async registerCashSale(amount: number, manager?: EntityManager): Promise<void> {
+    if (!amount || Number(amount) <= 0) {
+      return;
+    }
+
+    const repo = manager
+      ? manager.getRepository(CashSession)
+      : this.cashSessionRepository;
+
+    const executeUpdate = async () => {
+      const openSession = await repo.findOne({
+        where: { status: CashSessionStatus.OPEN },
+        order: { openedAt: 'DESC' },
+        loadEagerRelations: false,
+        ...(manager ? { lock: { mode: 'pessimistic_write' as const } } : {}),
+      });
+
+      if (!openSession) {
+        return;
+      }
+
+      const currentExpected =
+        openSession.expectedAmount !== null && openSession.expectedAmount !== undefined
+          ? Number(openSession.expectedAmount)
+          : Number(openSession.initialAmount) || 0;
+      const newExpected = Number((currentExpected + Number(amount)).toFixed(2));
+
+      await repo.update(openSession.id, { expectedAmount: newExpected });
+      this.logger.log(
+        `[Caja] Venta en efectivo S/ ${amount} sumada a la sesión abierta. Nuevo esperado: S/ ${newExpected}`,
+      );
+    };
+
+    if (manager) {
+      await executeUpdate();
+      return;
+    }
+
+    try {
+      await executeUpdate();
+    } catch (err: any) {
+      this.logger.warn(`[Caja] No se pudo actualizar sesión de caja: ${err.message}`);
+    }
   }
 }

@@ -18,6 +18,9 @@ import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { CreateBannerDto } from './dto/create-banner.dto';
 import { UpdateBannerDto } from './dto/update-banner.dto';
 import { Banner } from './banner.entity';
+import { Public } from '../auth/decorators/public.decorator';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { UserRole } from '../users/entities/user.entity';
 
 @Controller('banners')
 export class BannersController {
@@ -29,6 +32,7 @@ export class BannersController {
   /**
    * Obtiene los 15 slots fijos para el panel de administración
    */
+  @Roles(UserRole.SUPER_ADMIN)
   @Get('slots')
   async getSlots(): Promise<Banner[]> {
     return await this.bannersService.getHeroSlots();
@@ -37,6 +41,7 @@ export class BannersController {
   /**
    * Actualiza el contenido (foto, link, estado) de un slot específico (1 al 15)
    */
+  @Roles(UserRole.SUPER_ADMIN)
   @Put('slots/:order')
   async updateSlot(
     @Param('order', ParseIntPipe) order: number,
@@ -48,6 +53,7 @@ export class BannersController {
   /**
    * Enciende o apaga el slot específico (1 al 15)
    */
+  @Roles(UserRole.SUPER_ADMIN)
   @Patch('slots/:order/toggle')
   async toggleSlot(@Param('order', ParseIntPipe) order: number): Promise<Banner> {
     return await this.bannersService.toggleSlot(order);
@@ -56,6 +62,7 @@ export class BannersController {
   /**
    * Limpia / vacía la imagen y enlace de un slot (1 al 15)
    */
+  @Roles(UserRole.SUPER_ADMIN)
   @Delete('slots/:order/clear')
   async clearSlot(@Param('order', ParseIntPipe) order: number): Promise<Banner> {
     return await this.bannersService.clearSlot(order);
@@ -64,6 +71,7 @@ export class BannersController {
   /**
    * Reordena los slots (ej. mediante Drag & Drop)
    */
+  @Roles(UserRole.SUPER_ADMIN)
   @Post('reorder')
   async reorderSlots(
     @Body() body: { items: { id: string; order: number }[] },
@@ -74,6 +82,7 @@ export class BannersController {
   /**
    * Subida de imagen a Cloudinary
    */
+  @Roles(UserRole.SUPER_ADMIN)
   @Post('upload-image')
   @UseInterceptors(FileInterceptor('file'))
   async uploadBannerImage(@UploadedFile() file: Express.Multer.File) {
@@ -87,6 +96,7 @@ export class BannersController {
   /**
    * Listado general (usado por el carrusel de la tienda para obtener solo activos con foto)
    */
+  @Public()
   @Get()
   async getAllBanners(
     @Query('type') type?: string,
@@ -97,16 +107,19 @@ export class BannersController {
     return await this.bannersService.findAll({ type, isActive: isActiveBool });
   }
 
+  @Public()
   @Get(':id')
   async getBannerById(@Param('id') id: string): Promise<Banner> {
     return await this.bannersService.findOne(id);
   }
 
+  @Roles(UserRole.SUPER_ADMIN)
   @Post()
   async createBanner(@Body() dto: CreateBannerDto): Promise<Banner> {
     return await this.bannersService.create(dto);
   }
 
+  @Roles(UserRole.SUPER_ADMIN)
   @Put(':id')
   async updateBanner(
     @Param('id') id: string,
@@ -115,11 +128,13 @@ export class BannersController {
     return await this.bannersService.update(id, dto);
   }
 
+  @Roles(UserRole.SUPER_ADMIN)
   @Patch(':id/toggle-active')
   async toggleActive(@Param('id') id: string): Promise<Banner> {
     return await this.bannersService.toggleActive(id);
   }
 
+  @Roles(UserRole.SUPER_ADMIN)
   @Delete(':id')
   async deleteBanner(
     @Param('id') id: string,

@@ -56,6 +56,12 @@ export class Company {
   @Column({ type: 'varchar', length: 255, nullable: true, name: 'tiktok_url' })
   tiktokUrl?: string;
 
+  @Column({ type: 'varchar', length: 10, default: 'B001', name: 'boleta_series' })
+  boletaSeries: string;
+
+  @Column({ type: 'varchar', length: 10, default: 'F001', name: 'factura_series' })
+  facturaSeries: string;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

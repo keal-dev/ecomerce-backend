@@ -1,7 +1,9 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
 import { UbigeoService } from './ubigeo.service';
 import { Ubigeo } from './ubigeo.entity';
+import { Public } from '../auth/decorators/public.decorator';
 
+@Public()
 @Controller('ubigeo')
 export class UbigeoController {
   constructor(private readonly ubigeoService: UbigeoService) {}

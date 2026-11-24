@@ -10,7 +10,10 @@ import {
 import { PurchasesService } from './purchases.service';
 import { CreatePurchaseDto } from './dto/create-purchase.dto';
 import { Purchase } from './entities/purchase.entity';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { UserRole } from '../users/entities/user.entity';
 
+@Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
 @Controller('purchases')
 export class PurchasesController {
   constructor(private readonly purchasesService: PurchasesService) {}

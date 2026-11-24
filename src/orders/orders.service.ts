@@ -1,10 +1,34 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { Order } from './entities/order.entity';
 import { OrderItem } from './entities/order-item.entity';
 import { Product } from '../products/product.entity';
+import { CashRegisterService } from '../cash-register/cash-register.service';
+
+const VALID_ORDER_STATUSES = [
+  'pending',
+  'paid',
+  'preparing',
+  'shipping',
+  'delivered',
+  'cancelled',
+] as const;
+
+export interface PricedOrderItem {
+  productId: string;
+  title: string;
+  sku?: string;
+  imageUrl?: string;
+  quantity: number;
+  price: number;
+}
 
 export interface CreateOrderInput {
   orderNumber?: string;
@@ -53,9 +77,101 @@ export class OrdersService {
     @InjectRepository(Product)
     private readonly productRepository: Repository<Product>,
     private readonly configService: ConfigService,
+    private readonly cashRegisterService: CashRegisterService,
+    private readonly dataSource: DataSource,
   ) {}
 
+  async validateAndPriceItems(
+    items: {
+      productId?: string;
+      id?: string;
+      title?: string;
+      sku?: string;
+      imageUrl?: string;
+      quantity: number;
+      price?: number;
+    }[],
+    options: { applyOnlineShipping: boolean },
+  ): Promise<{
+    items: PricedOrderItem[];
+    subtotal: number;
+    shippingCost: number;
+    total: number;
+  }> {
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      throw new BadRequestException('El pedido debe contener al menos un producto.');
+    }
+
+    const qtyByProductId = new Map<string, number>();
+    const normalizedInputs = items.map((it) => {
+      const productId = (it.productId || it.id || '').trim();
+      if (!productId) {
+        throw new BadRequestException(
+          `El producto "${it.title || 'desconocido'}" no tiene un identificador válido.`,
+        );
+      }
+      const quantity = Number(it.quantity);
+      if (!Number.isInteger(quantity) || quantity < 1) {
+        throw new BadRequestException(
+          `La cantidad para el producto "${it.title || productId}" debe ser un entero mayor o igual a 1.`,
+        );
+      }
+      qtyByProductId.set(productId, (qtyByProductId.get(productId) || 0) + quantity);
+      return { productId, quantity, imageUrl: it.imageUrl };
+    });
+
+    const productIds = Array.from(qtyByProductId.keys());
+    const products = await this.productRepository.find({
+      where: { id: In(productIds) },
+      loadEagerRelations: false,
+    });
+    const productMap = new Map(products.map((p) => [p.id, p]));
+
+    for (const [productId, requestedQty] of qtyByProductId.entries()) {
+      const product = productMap.get(productId);
+      if (!product || product.isActive === false) {
+        throw new BadRequestException(
+          `El producto con ID "${productId}" no existe o no está disponible.`,
+        );
+      }
+      if (Number(product.stock) < requestedQty) {
+        throw new BadRequestException(
+          `Stock insuficiente para "${product.title}" (disponible: ${product.stock}, solicitado: ${requestedQty}).`,
+        );
+      }
+    }
+
+    let subtotalSum = 0;
+    const pricedItems: PricedOrderItem[] = normalizedInputs.map((it) => {
+      const product = productMap.get(it.productId)!;
+      const unitPrice = Number(product.price);
+      subtotalSum += unitPrice * it.quantity;
+      return {
+        productId: product.id,
+        title: product.title,
+        sku: product.sku ?? undefined,
+        imageUrl: product.imageUrl || it.imageUrl,
+        quantity: it.quantity,
+        price: unitPrice,
+      };
+    });
+
+    const subtotal = Number(subtotalSum.toFixed(2));
+    let shippingCost = 0;
+    if (options.applyOnlineShipping) {
+      const hasFreeShipping = products.some((p) => p.freeShipping === true);
+      shippingCost = hasFreeShipping || subtotal >= 99 ? 0 : 10;
+    }
+    const total = Number((subtotal + shippingCost).toFixed(2));
+
+    return { items: pricedItems, subtotal, shippingCost, total };
+  }
+
   async createOrder(input: CreateOrderInput): Promise<Order> {
+    if (!input.items || input.items.length === 0) {
+      throw new BadRequestException('El pedido debe contener al menos un producto.');
+    }
+
     const culqiEnv = (
       this.configService.get<string>('CULQI_ENV') ||
       process.env.CULQI_ENV ||
@@ -77,87 +193,118 @@ export class OrdersService {
       `[Orders] Creando nuevo pedido #${orderNumber} en entorno '${environment.toUpperCase()}'...`,
     );
 
-    const order = this.orderRepository.create({
-      orderNumber,
-      environment,
-      customerName: input.customerName,
-      customerEmail: input.customerEmail,
-      customerPhone: input.customerPhone,
-      docType: input.docType || 'DNI',
-      docNumber: input.docNumber,
-      department: input.department,
-      province: input.province,
-      district: input.district,
-      address: input.address,
-      reference: input.reference || null,
-      subtotal: input.subtotal,
-      shippingCost: input.shippingCost,
-      total: input.total,
-      currencySymbol: input.currencySymbol || 'S/',
-      paymentMethod: input.paymentMethod,
-      paymentStatus: input.paymentStatus || 'paid',
-      orderStatus: input.orderStatus || 'pending',
-      culqiChargeId: input.culqiChargeId || null,
-      culqiReferenceCode: input.culqiReferenceCode || null,
-      invoiceType: input.invoiceType || 'boleta',
-      companyRuc: input.companyRuc || null,
-      companyLegalName: input.companyLegalName || null,
-      notes: input.notes || null,
-      items: [],
-    });
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    const savedOrder = await this.orderRepository.save(order);
+    try {
+      const order = queryRunner.manager.create(Order, {
+        orderNumber,
+        environment,
+        customerName: input.customerName,
+        customerEmail: input.customerEmail,
+        customerPhone: input.customerPhone,
+        docType: input.docType || 'DNI',
+        docNumber: input.docNumber,
+        department: input.department,
+        province: input.province,
+        district: input.district,
+        address: input.address,
+        reference: input.reference || null,
+        subtotal: input.subtotal,
+        shippingCost: input.shippingCost,
+        total: input.total,
+        currencySymbol: input.currencySymbol || 'S/',
+        paymentMethod: input.paymentMethod,
+        paymentStatus: input.paymentStatus || 'paid',
+        orderStatus: input.orderStatus || 'pending',
+        culqiChargeId: input.culqiChargeId || null,
+        culqiReferenceCode: input.culqiReferenceCode || null,
+        invoiceType: input.invoiceType || 'boleta',
+        companyRuc: input.companyRuc || null,
+        companyLegalName: input.companyLegalName || null,
+        notes: input.notes || null,
+        items: [],
+      });
 
-    // Guardar items y descontar stock
-    if (input.items && input.items.length > 0) {
+      const savedOrder = await queryRunner.manager.save(Order, order);
       const orderItems: OrderItem[] = [];
 
       for (const it of input.items) {
-        const itemSubtotal = Number(it.price) * Number(it.quantity);
+        const qty = Number(it.quantity);
+        if (!Number.isInteger(qty) || qty < 1) {
+          throw new BadRequestException(
+            `La cantidad para "${it.title}" debe ser un entero mayor o igual a 1.`,
+          );
+        }
 
-        const orderItem = this.orderItemRepository.create({
+        if (it.productId) {
+          const product = await queryRunner.manager.findOne(Product, {
+            where: { id: it.productId },
+            lock: { mode: 'pessimistic_write' },
+            loadEagerRelations: false,
+          });
+
+          if (!product) {
+            throw new BadRequestException(
+              `El producto "${it.title}" (${it.productId}) no existe.`,
+            );
+          }
+
+          const currentStock = Number(product.stock) || 0;
+          if (currentStock < qty) {
+            throw new BadRequestException(
+              `Stock insuficiente para "${product.title}" (disponible: ${currentStock}, solicitado: ${qty}).`,
+            );
+          }
+
+          const newStock = currentStock - qty;
+          await queryRunner.manager.update(Product, product.id, { stock: newStock });
+          this.logger.log(
+            `[Stock] Producto '${product.title}' stock actualizado: ${currentStock} -> ${newStock}`,
+          );
+        }
+
+        const itemSubtotal = Number((Number(it.price) * qty).toFixed(2));
+        const orderItem = queryRunner.manager.create(OrderItem, {
           order: savedOrder,
           productId: it.productId || null,
           productTitle: it.title,
           productSku: it.sku || null,
           productImageUrl: it.imageUrl || null,
-          quantity: it.quantity,
-          unitPrice: it.price,
+          quantity: qty,
+          unitPrice: Number(it.price),
           subtotal: itemSubtotal,
         });
 
-        const savedItem = await this.orderItemRepository.save(orderItem);
+        const savedItem = await queryRunner.manager.save(OrderItem, orderItem);
         orderItems.push(savedItem);
-
-        // Descontar stock del producto si existe
-        if (it.productId) {
-          try {
-            const product = await this.productRepository.findOne({
-              where: { id: it.productId },
-            });
-            if (product && typeof product.stock === 'number') {
-              const newStock = Math.max(0, product.stock - it.quantity);
-              await this.productRepository.update(product.id, { stock: newStock });
-              this.logger.log(
-                `[Stock] Producto '${product.title}' stock actualizado: ${product.stock} -> ${newStock}`,
-              );
-            }
-          } catch (err: any) {
-            this.logger.warn(
-              `[Stock] No se pudo actualizar el stock del producto ${it.productId}: ${err.message}`,
-            );
-          }
-        }
       }
 
+      if (
+        savedOrder.paymentStatus === 'paid' &&
+        (savedOrder.paymentMethod || '').toLowerCase().includes('efectivo')
+      ) {
+        await this.cashRegisterService.registerCashSale(
+          Number(savedOrder.total) || 0,
+          queryRunner.manager,
+        );
+      }
+
+      await queryRunner.commitTransaction();
       savedOrder.items = orderItems;
+
+      this.logger.log(
+        `[Orders] Pedido #${savedOrder.orderNumber} guardado con éxito. ID: ${savedOrder.id}`,
+      );
+
+      return savedOrder;
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
     }
-
-    this.logger.log(
-      `[Orders] Pedido #${savedOrder.orderNumber} guardado con éxito. ID: ${savedOrder.id}`,
-    );
-
-    return savedOrder;
   }
 
   async findAll(query?: {
@@ -228,9 +375,139 @@ export class OrdersService {
     return order;
   }
 
+  async trackByOrderNumber(orderNumber: string) {
+    const cleanCode = orderNumber.trim().replace(/^#/, '');
+
+    const order = await this.orderRepository
+      .createQueryBuilder('order')
+      .leftJoinAndSelect('order.items', 'items')
+      .where(
+        'UPPER(order.orderNumber) = UPPER(:cleanCode) OR UPPER(COALESCE(order.culqiReferenceCode, \'\')) = UPPER(:cleanCode)',
+        { cleanCode },
+      )
+      .getOne();
+
+    if (!order) {
+      throw new NotFoundException(
+        `Pedido con identificador '${orderNumber}' no encontrado.`,
+      );
+    }
+
+    return {
+      id: order.id,
+      orderNumber: order.orderNumber,
+      orderStatus: order.orderStatus,
+      paymentStatus: order.paymentStatus,
+      createdAt: order.createdAt,
+      updatedAt: order.updatedAt,
+      subtotal: order.subtotal,
+      shippingCost: order.shippingCost,
+      total: order.total,
+      currencySymbol: order.currencySymbol,
+      department: order.department,
+      province: order.province,
+      district: order.district,
+      address: order.address,
+      reference: order.reference,
+      invoiceType: order.invoiceType,
+      invoiceSeries: order.invoiceSeries,
+      invoiceNumber: order.invoiceNumber,
+      invoicePdfUrl: order.invoicePdfUrl,
+      invoiceSunatStatus: order.invoiceSunatStatus,
+      items: order.items,
+    };
+  }
+
   async updateStatus(id: string, status: string): Promise<Order> {
-    const order = await this.findOne(id);
-    order.orderStatus = status;
-    return this.orderRepository.save(order);
+    if (
+      !VALID_ORDER_STATUSES.includes(
+        status as (typeof VALID_ORDER_STATUSES)[number],
+      )
+    ) {
+      throw new BadRequestException(`Estado de pedido inválido: '${status}'.`);
+    }
+
+    const existing = await this.findOne(id);
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const order = await queryRunner.manager.findOne(Order, {
+        where: { id: existing.id },
+        relations: { items: true },
+      });
+
+      if (!order) {
+        throw new NotFoundException(`Pedido con identificador '${id}' no encontrado.`);
+      }
+
+      const previousStatus = order.orderStatus;
+      if (previousStatus === status) {
+        await queryRunner.commitTransaction();
+        return order;
+      }
+
+      const isCancelling = previousStatus !== 'cancelled' && status === 'cancelled';
+      const isReactivating = previousStatus === 'cancelled' && status !== 'cancelled';
+
+      if (isCancelling || isReactivating) {
+        for (const item of order.items || []) {
+          if (!item.productId) continue;
+
+          const product = await queryRunner.manager.findOne(Product, {
+            where: { id: item.productId },
+            lock: { mode: 'pessimistic_write' },
+            loadEagerRelations: false,
+          });
+
+          if (!product) {
+            if (isReactivating) {
+              throw new BadRequestException(
+                `No se puede reactivar el pedido porque el producto "${item.productTitle}" ya no existe.`,
+              );
+            }
+            continue;
+          }
+
+          const currentStock = Number(product.stock) || 0;
+          const qty = Number(item.quantity) || 0;
+
+          if (isCancelling) {
+            const restoredStock = currentStock + qty;
+            await queryRunner.manager.update(Product, product.id, {
+              stock: restoredStock,
+            });
+            this.logger.log(
+              `[Stock] Cancelación pedido #${order.orderNumber}: '${product.title}' ${currentStock} -> ${restoredStock}`,
+            );
+          } else {
+            if (currentStock < qty) {
+              throw new BadRequestException(
+                `No se puede reactivar el pedido: stock insuficiente para "${product.title}" (disponible: ${currentStock}, requerido: ${qty}).`,
+              );
+            }
+            const updatedStock = currentStock - qty;
+            await queryRunner.manager.update(Product, product.id, {
+              stock: updatedStock,
+            });
+            this.logger.log(
+              `[Stock] Reactivación pedido #${order.orderNumber}: '${product.title}' ${currentStock} -> ${updatedStock}`,
+            );
+          }
+        }
+      }
+
+      await queryRunner.manager.update(Order, order.id, { orderStatus: status });
+      await queryRunner.commitTransaction();
+
+      order.orderStatus = status;
+      return order;
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
+    }
   }
 }

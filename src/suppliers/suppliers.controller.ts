@@ -12,7 +12,10 @@ import {
 import { SuppliersService } from './suppliers.service';
 import { CreateSupplierDto } from './dto/create-supplier.dto';
 import { UpdateSupplierDto } from './dto/update-supplier.dto';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { UserRole } from '../users/entities/user.entity';
 
+@Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
 @Controller('suppliers')
 export class SuppliersController {
   constructor(private readonly suppliersService: SuppliersService) {}

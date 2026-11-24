@@ -113,6 +113,27 @@ export class Order {
   @Column({ type: 'varchar', length: 255, nullable: true, name: 'company_legal_name' })
   companyLegalName: string | null;
 
+  @Column({ type: 'varchar', length: 10, nullable: true, name: 'invoice_series' })
+  invoiceSeries: string | null;
+
+  @Column({ type: 'varchar', length: 20, nullable: true, name: 'invoice_number' })
+  invoiceNumber: string | null;
+
+  @Column({ type: 'text', nullable: true, name: 'invoice_pdf_url' })
+  invoicePdfUrl: string | null;
+
+  @Column({ type: 'text', nullable: true, name: 'invoice_xml_url' })
+  invoiceXmlUrl: string | null;
+
+  @Column({ type: 'text', nullable: true, name: 'invoice_cdr_url' })
+  invoiceCdrUrl: string | null;
+
+  @Column({ type: 'varchar', length: 50, nullable: true, name: 'invoice_sunat_status' })
+  invoiceSunatStatus: string | null;
+
+  @Column({ type: 'varchar', length: 20, nullable: true, name: 'invoice_environment' })
+  invoiceEnvironment: string | null; // 'demo' | 'production'
+
   @Column({ type: 'text', nullable: true })
   notes: string | null;
 

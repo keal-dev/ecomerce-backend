@@ -18,12 +18,16 @@ import { SuppliersModule } from './suppliers/suppliers.module';
 import { PaymentsModule } from './payments/payments.module';
 import { MailModule } from './mail/mail.module';
 import { OrdersModule } from './orders/orders.module';
+import { InvoicingModule } from './invoicing/invoicing.module';
+import { AuthModule } from './auth/auth.module';
+import { ClaimsModule } from './claims/claims.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    AuthModule,
     UsersModule,
     CategoriesModule,
     CloudinaryModule,
@@ -38,6 +42,8 @@ import { OrdersModule } from './orders/orders.module';
     PaymentsModule,
     MailModule,
     OrdersModule,
+    InvoicingModule,
+    ClaimsModule,
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
