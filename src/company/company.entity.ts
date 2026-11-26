@@ -26,8 +26,11 @@ export class Company {
   @Column({ type: 'varchar', length: 255, nullable: true, name: 'logo_public_id' })
   logoPublicId?: string;
 
-  @Column({ type: 'varchar', length: 20, default: '#ffe600', name: 'primary_color' })
+  @Column({ type: 'varchar', length: 20, default: '#000000', name: 'primary_color' })
   primaryColor: string;
+
+  @Column({ type: 'varchar', length: 20, default: '#de2a2a', name: 'accent_color' })
+  accentColor: string;
 
   @Column({ type: 'varchar', length: 255, nullable: true })
   slogan?: string;

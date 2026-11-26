@@ -137,6 +137,18 @@ export class BannersService {
       banner.linkUrl = dto.linkUrl ? dto.linkUrl.trim() : null;
     }
 
+    if (dto.linkMode !== undefined) {
+      banner.linkMode = dto.linkMode;
+    }
+
+    if (dto.buttonText !== undefined) {
+      banner.buttonText = dto.buttonText ? dto.buttonText.trim() : null;
+    }
+
+    if (dto.buttonPosition !== undefined) {
+      banner.buttonPosition = dto.buttonPosition;
+    }
+
     if (dto.isActive !== undefined) {
       banner.isActive = dto.isActive;
     }
@@ -155,6 +167,9 @@ export class BannersService {
     const banner = await this.findByOrder(order, type);
     banner.imageUrl = null;
     banner.linkUrl = null;
+    banner.linkMode = 'image';
+    banner.buttonText = null;
+    banner.buttonPosition = 'bottom-left';
     banner.isActive = false;
     this.logger.log(`Limpiando slot #${order}`);
     return await this.bannerRepository.save(banner);
@@ -165,6 +180,9 @@ export class BannersService {
       title: dto.title.trim(),
       imageUrl: dto.imageUrl.trim(),
       linkUrl: dto.linkUrl ? dto.linkUrl.trim() : null,
+      linkMode: dto.linkMode ?? 'image',
+      buttonText: dto.buttonText ? dto.buttonText.trim() : null,
+      buttonPosition: dto.buttonPosition ?? 'bottom-left',
       type: dto.type ? dto.type.trim() : 'hero',
       order: dto.order ?? 1,
       isActive: dto.isActive !== undefined ? dto.isActive : true,
@@ -177,6 +195,9 @@ export class BannersService {
     if (dto.title !== undefined) banner.title = dto.title.trim();
     if (dto.imageUrl !== undefined) banner.imageUrl = dto.imageUrl ? dto.imageUrl.trim() : null;
     if (dto.linkUrl !== undefined) banner.linkUrl = dto.linkUrl ? dto.linkUrl.trim() : null;
+    if (dto.linkMode !== undefined) banner.linkMode = dto.linkMode;
+    if (dto.buttonText !== undefined) banner.buttonText = dto.buttonText ? dto.buttonText.trim() : null;
+    if (dto.buttonPosition !== undefined) banner.buttonPosition = dto.buttonPosition;
     if (dto.order !== undefined) banner.order = dto.order;
     if (dto.isActive !== undefined) banner.isActive = dto.isActive;
     return await this.bannerRepository.save(banner);

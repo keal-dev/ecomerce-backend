@@ -20,6 +20,20 @@ export class Banner {
   @Column({ type: 'varchar', length: 255, nullable: true, name: 'link_url' })
   linkUrl: string | null;
 
+  @Column({ type: 'varchar', length: 20, default: 'image', name: 'link_mode' })
+  linkMode: 'image' | 'button';
+
+  @Column({ type: 'varchar', length: 60, nullable: true, name: 'button_text' })
+  buttonText: string | null;
+
+  @Column({
+    type: 'varchar',
+    length: 20,
+    default: 'bottom-left',
+    name: 'button_position',
+  })
+  buttonPosition: 'bottom-left' | 'bottom-center' | 'bottom-right' | 'center';
+
   @Column({ type: 'varchar', length: 50, default: 'hero' })
   type: string; // 'hero', 'announcement', 'promo'
 

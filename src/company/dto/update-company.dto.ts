@@ -27,6 +27,10 @@ export class UpdateCompanyDto {
 
   @IsOptional()
   @IsString()
+  accentColor?: string;
+
+  @IsOptional()
+  @IsString()
   slogan?: string;
 
   @IsOptional()

@@ -18,7 +18,24 @@ export class CompanyService {
     });
 
     if (companies.length > 0) {
-      return companies[0];
+      const existing = companies[0];
+      let needsSave = false;
+
+      if (!existing.primaryColor || existing.primaryColor.toLowerCase() === '#ffe600') {
+        existing.primaryColor = '#000000';
+        needsSave = true;
+      }
+
+      if (!existing.accentColor) {
+        existing.accentColor = '#de2a2a';
+        needsSave = true;
+      }
+
+      if (needsSave) {
+        return await this.companyRepository.save(existing);
+      }
+
+      return existing;
     }
 
     // Si aún no existe registro de empresa, inicializamos uno por defecto
@@ -26,6 +43,7 @@ export class CompanyService {
       name: 'Cooperativa Gourmet',
       legalName: 'Cooperativa Gourmet S.A.C.',
       primaryColor: '#000000',
+      accentColor: '#de2a2a',
       currency: 'PEN',
       currencySymbol: 'S/',
     });
