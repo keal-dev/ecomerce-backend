@@ -21,6 +21,7 @@ import { OrdersModule } from './orders/orders.module';
 import { InvoicingModule } from './invoicing/invoicing.module';
 import { AuthModule } from './auth/auth.module';
 import { ClaimsModule } from './claims/claims.module';
+import { SystemModule } from './system/system.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { ClaimsModule } from './claims/claims.module';
     OrdersModule,
     InvoicingModule,
     ClaimsModule,
+    SystemModule,
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

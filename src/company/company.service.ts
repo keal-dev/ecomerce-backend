@@ -23,9 +23,9 @@ export class CompanyService {
 
     // Si aún no existe registro de empresa, inicializamos uno por defecto
     const defaultCompany = this.companyRepository.create({
-      name: 'MercadoAdmin',
-      legalName: 'Empresa Principal S.A.C.',
-      primaryColor: '#ffe600',
+      name: 'Cooperativa Gourmet',
+      legalName: 'Cooperativa Gourmet S.A.C.',
+      primaryColor: '#000000',
       currency: 'PEN',
       currencySymbol: 'S/',
     });
