@@ -22,6 +22,7 @@ import { InvoicingModule } from './invoicing/invoicing.module';
 import { AuthModule } from './auth/auth.module';
 import { ClaimsModule } from './claims/claims.module';
 import { SystemModule } from './system/system.module';
+import { DocumentLookupModule } from './document-lookup/document-lookup.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { SystemModule } from './system/system.module';
     InvoicingModule,
     ClaimsModule,
     SystemModule,
+    DocumentLookupModule,
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
